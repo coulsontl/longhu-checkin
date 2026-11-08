@@ -352,6 +352,74 @@ MAP_ITEMS = [
     ("user_K446", "true"),
 ]
 
+# ---------------------------------------------------------------------------
+# 成套机型预设
+# ---------------------------------------------------------------------------
+# 脱敏模板原本把所有账号都写成同一套 Pixel 7 画像。为降低「一批账号看起来
+# 像同一台设备」的聚类风险，这里提供几套公开机型的成套预设供添加账号时选择。
+#
+# 规则：品牌 / 机型 / 代号 / build fingerprint / UA / build id 必须一起换，
+#       只改其中一项会被 /udid/m1 判 -10005（实测）。其余硬件与结构性字段
+#       沿用脱敏模板，不引入任何真实设备痕迹。下列每套都已实测返回 code=0。
+_BRAND_KEYS = ("K2", "K6", "K19", "K24", "K331", "K855", "K1112", "K1117", "K304")
+_MODEL_KEYS = ("K18", "K1111", "K303")
+_DEVICE_KEYS = ("K17", "K20", "K1110", "K1113")
+_FP_KEYS = ("K13", "K1062")
+
+
+def _profile_fields(brand, model, device, build, incremental, brand_tag):
+    """生成一套自洽的机型字段覆盖表（只覆盖机型识别字段）。"""
+    fields = {key: brand for key in _BRAND_KEYS}
+    fields.update({key: model for key in _MODEL_KEYS})
+    fields.update({key: device for key in _DEVICE_KEYS})
+    fingerprint = "%s/%s/%s:14/%s/%s:user/release-keys" % (
+        brand, device, device, build, incremental)
+    fields.update({key: fingerprint for key in _FP_KEYS})
+    fields["K100"] = "Dalvik/2.1.0 (Linux; U; Android 14; %s Build/%s)" % (device, build)
+    fields["K1142"] = "android-" + brand_tag
+    return fields
+
+
+DEVICE_PROFILES = {
+    "pixel7": {
+        "name": "Google Pixel 7", "brand": "google", "model": "Pixel 7",
+        # 空覆盖 = 使用 MAP_ITEMS 里原始脱敏值，保证旧行为完全一致
+        "fields": {},
+    },
+    "xiaomi14": {
+        "name": "Xiaomi 14", "brand": "Xiaomi", "model": "Xiaomi 14",
+        "fields": _profile_fields("Xiaomi", "Xiaomi 14", "houji",
+                                  "UKQ1.230804.001", "V816.0.1.0.UNCCNXM", "xiaomi"),
+    },
+    "oneplus12": {
+        "name": "OnePlus 12", "brand": "OnePlus", "model": "OnePlus 12",
+        "fields": _profile_fields("OnePlus", "OnePlus 12", "waffle",
+                                  "UKQ1.230716.001", "2412291200", "oneplus"),
+    },
+    "vivo_x100": {
+        "name": "vivo X100", "brand": "vivo", "model": "vivo X100",
+        "fields": _profile_fields("vivo", "vivo X100", "V2309A",
+                                  "UP1A.231005.007", "compiler07022220", "vivo"),
+    },
+    "samsung_s24": {
+        "name": "Samsung Galaxy S24", "brand": "samsung", "model": "SM-S9210",
+        "fields": _profile_fields("samsung", "SM-S9210", "e1q",
+                                  "UP1A.231005.007", "S9210XXU1AWM9", "samsung"),
+    },
+}
+
+DEFAULT_PROFILE = "pixel7"
+PROFILE_KEYS = tuple(DEVICE_PROFILES)
+
+
+def profiles():
+    """给前端用的机型列表（只给预设，不开放字段自由填写）。"""
+    return [
+        {"key": key, "name": item["name"], "brand": item["brand"], "model": item["model"]}
+        for key, item in DEVICE_PROFILES.items()
+    ]
+
+
 # 设备消息字段：1=SDK 版本串 2=顶象版本 3=App 版本号 4=appKey 5=保留 6=常量
 # 7=上一枚令牌 8=常量 9=包名 10=常量
 DEVICE_MSG = {
@@ -486,9 +554,17 @@ def fetch_token(seed, timeout=20):
             'resp_len': len(resp), 'sign': sign}
 
 
-def issue(longhu_token, ts=None, overrides=None, timeout=20):
-    """传入龙湖 token（32 位），返回该账号的指纹 token 结果字典。"""
-    seed, _t1, _t2 = build_seed(None, ts1=ts, overrides=overrides, longhu_token=longhu_token)
+def issue(longhu_token, ts=None, overrides=None, timeout=20, profile=None):
+    """传入设备派生盐，返回该账号的指纹 token 结果字典。
+
+    profile 为 None 时沿用默认 Pixel 7 模板，行为与旧版完全一致；显式
+    overrides 优先级高于模板字段，方便手动调试单个 K 字段。
+    """
+    key = (profile or DEFAULT_PROFILE).strip().lower()
+    fields = dict(DEVICE_PROFILES.get(key, DEVICE_PROFILES[DEFAULT_PROFILE])["fields"])
+    fields.update(overrides or {})
+    seed, _t1, _t2 = build_seed(None, ts1=ts, overrides=fields,
+                                 longhu_token=longhu_token)
     return fetch_token(seed, timeout=timeout)
 
 
@@ -497,6 +573,8 @@ def main(argv=None):
     ap.add_argument('--longhu-token', required=True, help='龙湖登录 token（32 位）')
     ap.add_argument('--ts', type=int, default=None, help='K451 epoch ms (default: now)')
     ap.add_argument('--set', action='append', default=[], metavar='K=V', help='override map field')
+    ap.add_argument('--profile', choices=PROFILE_KEYS, default=DEFAULT_PROFILE,
+                    help='机型预设（可选值：%s）' % ', '.join(PROFILE_KEYS))
     ap.add_argument('--json', action='store_true')
     a = ap.parse_args(argv)
 
@@ -504,7 +582,7 @@ def main(argv=None):
     for item in a.set:
         k, _, v = item.partition('=')
         overrides[k] = v
-    res = issue(a.longhu_token.strip(), ts=a.ts, overrides=overrides)
+    res = issue(a.longhu_token.strip(), ts=a.ts, overrides=overrides, profile=a.profile)
     if a.json:
         print(json.dumps(res, ensure_ascii=False))
     else:

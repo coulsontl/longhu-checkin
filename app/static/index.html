@@ -184,11 +184,18 @@
       <input type="text" id="phMobile" inputmode="numeric" maxlength="11" placeholder="11 位手机号">
     </div>
     <div class="field">
+      <label>设备机型（成套预设，一账号一套）</label>
+      <select id="phProfile">
+        <option value="">自动（按账号分配）</option>
+      </select>
+    </div>
+    <div class="field">
       <label>设备指纹（自动生成，一账号一份）</label>
       <div class="inline">
         <input type="text" id="phFp" readonly placeholder="点「获取验证码」时自动生成">
         <button class="small ghost" id="btnPhNewFp" type="button">换一个</button>
       </div>
+      <div id="phProfileHint" style="margin-top:6px;font-size:11.5px;color:var(--dim)"></div>
     </div>
     <div class="field">
       <label>短信验证码</label>
@@ -283,6 +290,7 @@
 const $ = (id) => document.getElementById(id);
 let accounts = [];
 let phFingerprint = "";
+let phProfileKey = "";
 let phBusy = false;
 
 function toast(msg, isErr) {
@@ -436,12 +444,40 @@ $("btnAdd").onclick = () => {
   $("phCode").value = "";
   $("phRisk").value = "";
   $("phFp").value = "";
+  $("phProfile").value = "";
+  $("phProfileHint").textContent = "";
   phFingerprint = "";
+  phProfileKey = "";
   phStatus("");
+  loadProfiles();
   $("modalAdd").classList.add("show");
   $("phMobile").focus();
 };
 $("btnPhCancel").onclick = () => $("modalAdd").classList.remove("show");
+
+async function loadProfiles() {
+  const sel = $("phProfile");
+  if (sel.dataset.loaded) return;
+  try {
+    const res = await api("/api/device/profiles");
+    (res.profiles || []).forEach((p) => {
+      const opt = document.createElement("option");
+      opt.value = p.key;
+      opt.textContent = `${p.name}（${p.brand}）`;
+      sel.appendChild(opt);
+    });
+    sel.dataset.loaded = "1";
+  } catch (e) {
+    // 拉不到列表就保持「自动」，不阻塞添加账号
+  }
+}
+
+$("phProfile").onchange = () => {
+  phFingerprint = "";
+  phProfileKey = "";
+  $("phFp").value = "";
+  $("phProfileHint").textContent = "机型已改，请重新生成指纹并获取验证码";
+};
 
 // ---- 手机号 + 验证码登录 ----
 function phMobileValue() {
@@ -455,9 +491,14 @@ async function prepareFingerprint(force) {
   const mobile = phMobileValue();
   const fd = new FormData();
   fd.append("mobile", mobile);
+  const chosen = $("phProfile").value.trim();
+  if (chosen) fd.append("profile", chosen);
   const res = await api("/api/login/prepare", { method: "POST", body: fd });
   phFingerprint = res.fingerprint || "";
+  phProfileKey = res.profile || "";
   $("phFp").value = phFingerprint;
+  $("phProfileHint").textContent = res.profile_name
+    ? `当前指纹机型：${res.profile_name}` : "";
   return phFingerprint;
 }
 
@@ -549,6 +590,7 @@ $("btnPhSubmit").onclick = async () => {
     fd.append("code", sms);
     fd.append("fingerprint", phFingerprint);
     fd.append("name", $("accName").value.trim());
+    if (phProfileKey) fd.append("profile", phProfileKey);
     const res = await api("/api/login/verify", { method: "POST", body: fd });
     $("modalAdd").classList.remove("show");
     toast(`已添加：${res.name}`);
@@ -702,6 +744,7 @@ document.querySelectorAll(".modal").forEach((m) => {
 });
 
 loadAll();
+loadProfiles();
 setInterval(loadAll, 60000);
 </script>
 </body>

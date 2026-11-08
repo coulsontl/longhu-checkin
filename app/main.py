@@ -1,5 +1,6 @@
 """龙湖签到服务：Web 前端 + REST API + 内置定时任务。"""
 
+import hashlib
 import logging
 import os
 import re
@@ -213,12 +214,26 @@ def _valid_mobile(raw: str) -> str:
     return value
 
 
-def _new_fingerprint(mobile: str) -> str:
+def _pick_profile(mobile: str, requested: str | None) -> str:
+    """选一套机型预设：手动指定优先，自动模式尽量把新账号分散到不同机型。"""
+    key = (requested or "").strip().lower()
+    keys = dxrisk.PROFILE_KEYS
+    if key and key != "auto":
+        if key not in dxrisk.DEVICE_PROFILES:
+            raise HTTPException(400, "未知机型预设，请从列表里选")
+        return key
+    # 自动：已有账号数轮转 + 手机号稳定哈希，避免所有账号都落在同一套
+    digest = hashlib.sha256(("dx-profile:" + mobile).encode()).digest()
+    return keys[(len(db.list_accounts(only_enabled=True)) + digest[0]) % len(keys)]
+
+
+def _new_fingerprint(mobile: str, profile: str) -> str:
     """给新账号签一份独立指纹；共用指纹会被上游判成同设备多账号。"""
     last = ""
     for _ in range(4):
         try:
-            res = dxrisk.issue(f"{mobile}:{uuid.uuid4().hex}", timeout=15)
+            res = dxrisk.issue(f"{mobile}:{uuid.uuid4().hex}",
+                               timeout=15, profile=profile)
         except Exception as exc:  # 指纹服务偶发超时，重试即可
             last = str(exc)[:120]
             continue
@@ -241,11 +256,25 @@ def _login_error(exc: app_login.LoginError) -> JSONResponse:
     )
 
 
+@app.get("/api/device/profiles")
+def api_device_profiles():
+    """机型预设列表；只给成套预设，不开放字段自由填写。"""
+    return {"ok": True, "profiles": dxrisk.profiles(),
+            "default_profile": dxrisk.DEFAULT_PROFILE}
+
+
 @app.post("/api/login/prepare")
-def api_login_prepare(mobile: str = Form(...)):
-    """登录前置：签一份新的设备指纹，后续两步都要原样带回。"""
+def api_login_prepare(mobile: str = Form(...), profile: str = Form("")):
+    """登录前置：按所选机型签一份新的设备指纹，后续两步都要原样带回。"""
     number = _valid_mobile(mobile)
-    return {"ok": True, "mobile": number, "fingerprint": _new_fingerprint(number)}
+    key = _pick_profile(number, profile)
+    return {
+        "ok": True,
+        "mobile": number,
+        "fingerprint": _new_fingerprint(number, key),
+        "profile": key,
+        "profile_name": dxrisk.DEVICE_PROFILES[key]["name"],
+    }
 
 
 @app.post("/api/login/send-code")
@@ -275,6 +304,7 @@ def api_login_verify(
     code: str = Form(...),
     fingerprint: str = Form(...),
     name: str = Form(""),
+    profile: str = Form(""),
 ):
     """用短信验证码换 token，校验后直接写进账号表。"""
     number = _valid_mobile(mobile)
@@ -326,8 +356,11 @@ def api_login_verify(
         "nickname": profile.get("nickname", ""),
         "expire_at": longhu.expire_at(),
     })
+    pkey = (profile or "").strip().lower()
+    pname = dxrisk.DEVICE_PROFILES.get(pkey, {}).get("name", "自动分配")
     db.add_log(account_id, final_name, "login", "ok",
-               f"手机号验证码登录成功，设备指纹已同步（lmid {result.get('lmid') or '-'}）")
+               f"手机号验证码登录成功，设备指纹已同步（机型 {pname}，lmid "
+               f"{result.get('lmid') or '-'}）")
     return {"ok": True, "id": account_id, "name": final_name, "profile": profile}
 
 

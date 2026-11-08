@@ -47,6 +47,21 @@
 
 ![添加账号：手机号 + 验证码](docs/screenshot-add-account.png)
 
+### 设备机型预设
+
+添加账号面板有一个「设备机型」下拉，默认**自动（按账号分配）**，也可以手动指定。
+服务端提供 5 套成套自洽的公开机型预设：Google Pixel 7、Xiaomi 14、OnePlus 12、
+vivo X100、Samsung Galaxy S24，列表由 `GET /api/device/profiles` 返回。
+
+之所以是「成套」而不是自由填字段：顶象 `/udid/m1` 会校验品牌、机型、代号、
+build fingerprint、UA 之间的一致性，只改其中一项会直接返回 `-10005`。因此每套预设
+一次性覆盖这组字段，其余硬件与结构性字段沿用脱敏模板，不引入任何真实设备痕迹；
+面板只允许选预设，**不开放字段编辑**。
+
+自动模式按「已有账号数 + 手机号哈希」轮转分配，尽量让多个账号分散到不同机型画像，
+避免上游看到一批账号都来自同一套设备模板。选好机型后点「获取验证码」才会按该模板
+签发指纹，中途改机型会清空已签指纹并要求重新生成；**已有账号的 `dx_token` 不受影响**。
+
 登录拿到的 token 与现有签到链路完全通用（用 `probe_token` 在 `C20400/C2`
 和 `L00602/L0` 两种网关都验证过）。导入之后 token 仍由服务自动滚动续期，
 有效期 30 天且滑动过期，服务每天跑就永远不会失效；只有**连续停机超过 30 天**
@@ -222,9 +237,10 @@ https://oapi.dingtalk.com/robot/send?access_token=xxxxxxxx
 | `GET` | `/api/overview` | 概览统计、下次执行时间 |
 | `GET` | `/api/accounts` | 账号列表（token 已脱敏），含两个入口的窗口与下次执行时刻 |
 | `POST` | `/api/accounts/bind` | 旧版 cURL / HAR / token 导入接口，仅为兼容保留，网页已不提供入口 |
-| `POST` | `/api/login/prepare` | `form: mobile`，签发一份新的独立设备指纹，返回 `fingerprint` |
+| `GET` | `/api/device/profiles` | 返回可选的成套机型预设列表（key / name / brand / model） |
+| `POST` | `/api/login/prepare` | `form: mobile[, profile]`，按所选机型签发独立设备指纹，返回 `fingerprint` / `profile` / `profile_name`；`profile` 留空或 `auto` 为自动分配 |
 | `POST` | `/api/login/send-code` | `form: mobile / fingerprint / risk_token`，发送短信验证码；缺滑块时返回 400 且 `need_captcha: true` |
-| `POST` | `/api/login/verify` | `form: mobile / code / fingerprint / name`，换 token 校验后直接入库 |
+| `POST` | `/api/login/verify` | `form: mobile / code / fingerprint / name[, profile]`，换 token 校验后直接入库 |
 | `DELETE` | `/api/accounts/{id}` | 删除账号及其日志、排期 |
 | `POST` | `/api/accounts/{id}/run` | 立即执行一轮（续期 + 两个入口 + 刷新），不受排期限制 |
 | `POST` | `/api/accounts/{id}/schedule` | 自定义该账号时间，`form` 字段 `mini_time` / `app_time`，留空=跟随全局 |
@@ -577,7 +593,7 @@ longhu-app/
 │   ├── main.py          FastAPI 路由与页面入口（含手机号登录三步 API）
 │   ├── longhu.py        龙湖 API 客户端：签名 / 续期 / 签到 / 查询
 │   ├── login.py         App 端短信登录：app 密钥签名 / 发码 / 换 token
-│   ├── dxrisk.py        顶象设备指纹签发（纯标准库，一账号一份）
+│   ├── dxrisk.py        顶象设备指纹签发（纯标准库，5 套成套机型预设）
 │   ├── parser.py        旧版 cURL / HAR / token 解析（兼容保留，网页已不用）
 │   ├── runner.py        单账号流程编排 + 告警推送
 │   ├── scheduler.py     APScheduler 定时任务
