@@ -97,7 +97,7 @@ def _dx_conflict(account: dict, accounts: list[dict]) -> list[dict]:
     """检查设备指纹是否与其他启用账号共用。
 
     2026-11-03 实测：同一个指纹用于多个账号会触发风控。因此指纹按 id 最小的
-    账号归属，其余共用者视为冲突、暂停签到，直到换成独立指纹（重装 App 可换）。
+    账号归属，其余共用者视为冲突、暂停签到，直到换成独立指纹（新版可删除账号后重新手机号登录自动签发）。
 
     返回 id 更小的共用账号列表；空列表表示无冲突。
     """
@@ -124,9 +124,9 @@ def _app_entry(account: dict, item: dict, mode: str) -> tuple[str, str]:
     if mode == "off":
         return "skipped", f"{label}已关闭"
     if not (account.get("dx_token") or "").strip():
-        # 没有 App 内真实指纹时不要硬打：udid/c1 现造的指纹必被判风险，
+        # 没有可用顶象指纹时不要硬打：udid/c1 现造的指纹必被判风险，
         # 攒的全是负面记录，还会把账号拖进 8040012 的坑里
-        return "todo", f"{label}未配置设备指纹，跳过（每个账号要填一份独立指纹，重装 App 可换新）"
+        return "todo", f"{label}未配置设备指纹，跳过（新版手机号登录会自动签发；旧版账号请点「换指纹」补填）"
     if mode == "auto":
         return longhu.checkin(account, item["activity_no"], label)
 
@@ -134,8 +134,8 @@ def _app_entry(account: dict, item: dict, mode: str) -> tuple[str, str]:
     if state is True:
         return "already", f"{label}今日已签到"
     if state is False:
-        return "todo", f"{label}未签到，需在 App 内手动签（当前为 manual 模式）"
-    return "todo", f"{label}状态未知，需在 App 内确认"
+        return "todo", f"{label}未签到，APP 入口设为 manual：请在 App 内手动签，或把模式改回 auto"
+    return "todo", f"{label}状态未知，请在 App 内确认，或把 APP 模式改回 auto"
 
 
 def run_account(account: dict, do_checkin: bool = True,
@@ -189,7 +189,7 @@ def run_account(account: dict, do_checkin: bool = True,
         names = "、".join(a["name"] for a in conflict)
         dx_block = (
             f"设备指纹与「{names}」共用，已暂停签到：同一指纹多账号会触发风控。"
-            "重装 App 可获得新指纹，之后点「换指纹」填入"
+            "点「换指纹」填一份未被占用的新指纹（新版也可删除账号后重新手机号登录自动签发）"
         )
         result["dx_conflict"] = [a["name"] for a in conflict]
         db.add_log(acc_id, acc_name, "dx", "fail", dx_block)

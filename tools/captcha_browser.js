@@ -13,7 +13,11 @@
  *
  * 用法：
  *   node captcha_browser.js --mode=manual --device=<指纹>
- *   node captcha_browser.js --mode=auto --device=<指纹> --dist=120
+ *   node captcha_browser.js --mode=auto --device=<指纹>
+ * 容器：CHROME_PATH=/usr/bin/chromium node captcha_browser.js --mode=auto --device=<指纹>
+ *
+ * auto 模式复用 ../app/static/slider.js 的缺口识别（unshuffle + chamfer）与拖动，
+ * 不需要外部传 --dist；manual 模式仍由人在弹出的浏览器里拖一次。
  */
 const { chromium } = require("playwright-core");
 const fs = require("fs");
@@ -24,6 +28,7 @@ const APP_ID = "d1a43734fc59aeae9f1562dbd70fdf54";
 const API = "https://ly-ver.longhu.net";
 const STA = "https://ly-sta.longhu.net/dx-captcha";
 const COMP_URL = `${STA}/basic-captcha-js.js`;
+const SLIDER_JS = path.join(__dirname, "..", "app", "static", "slider.js");
 const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
   "(KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36";
 
@@ -35,7 +40,7 @@ const args = Object.fromEntries(
 );
 const MODE = args.mode || "auto";
 const DEVICE = args.device || "";
-const DIST = Number(args.dist || 0);
+const DIST = Number(args.dist || 0); // 兼容旧调用；auto 模式已内置缺口识别，不再依赖外部 dist
 const TIMEOUT = Number(args.timeout || 120) * 1000;
 
 const HTML = `<!DOCTYPE html><html><head><meta charset="utf-8"></head>
@@ -59,9 +64,18 @@ function emit(obj) {
 
   let browser;
   try {
-    browser = await chromium.launch({ channel: "chrome", headless: MODE !== "manual" });
+    // 容器里由 CHROME_PATH 指向 Debian Chromium；开发机仍用 Playwright 的 chrome channel。
+    const CHROME_PATH = process.env.CHROME_PATH || "";
+    const launchOpts = { headless: MODE !== "manual" };
+    if (CHROME_PATH) {
+      launchOpts.executablePath = CHROME_PATH;
+      launchOpts.args = ["--no-sandbox", "--disable-dev-shm-usage"];
+    } else {
+      launchOpts.channel = "chrome";
+    }
+    browser = await chromium.launch(launchOpts);
   } catch (e) {
-    emit({ ok: false, error: "无法启动 Chrome（需要 playwright-core + 本机 Chrome）" });
+    emit({ ok: false, error: "无法启动 Chrome（需要 playwright-core + Chrome/Chromium；容器请设置 CHROME_PATH）" });
     return;
   }
 
@@ -79,6 +93,21 @@ function emit(obj) {
   await page.route("**/basic-captcha-js.js*", (r) =>
     r.fulfill({ status: 200, contentType: "application/javascript; charset=utf-8", body: comp })
   );
+  // slider.js 用 fetch(mode:'cors') 取 p1/p2；用 Node 侧代取并补 ACAO，绕开 about:blank 的 CORS 限制。
+  await page.route(/\/api\/p[12](?:\?|$)/, async (r) => {
+    try {
+      const resp = await fetch(r.request().url());
+      const body = Buffer.from(await resp.arrayBuffer());
+      await r.fulfill({
+        status: resp.status,
+        contentType: resp.headers.get("content-type") || "image/png",
+        headers: { "access-control-allow-origin": "*" },
+        body,
+      });
+    } catch (e) {
+      await r.abort().catch(() => {});
+    }
+  });
 
   const st = { sid: null, y: null, token: null, v1: null };
   page.on("response", async (r) => {
@@ -106,6 +135,27 @@ function emit(obj) {
   const timer = setTimeout(() => finish({ error: "超时" }), TIMEOUT);
 
   await page.setContent(HTML, { waitUntil: "networkidle", timeout: 40000 }).catch(() => {});
+
+  if (MODE === "auto") {
+    // 复用看板里的 DXSlider.solve()：还原打乱底图 → chamfer 找缺口 → 合成 26 步拖动 → 读 /api/v1。
+    try {
+      await page.addScriptTag({ path: SLIDER_JS });
+      const result = await page.evaluate(async ([device, timeoutMs]) => {
+        if (!window.DXSlider || !window.DXSlider.solve) {
+          return { ok: false, error: "DXSlider 未加载" };
+        }
+        return await window.DXSlider.solve(device, { timeoutMs });
+      }, [DEVICE, TIMEOUT]);
+      if (result && result.ok && result.token) st.token = result.token;
+      clearTimeout(timer);
+      return finish(result || { error: "自动求解无返回" });
+    } catch (e) {
+      clearTimeout(timer);
+      return finish({ error: "自动求解异常: " + e.message });
+    }
+  }
+
+  // manual：弹出验证码，由人在浏览器窗口里拖一次。
   await page.evaluate(([APP_ID, API]) => {
     new window._dx.Captcha(document.getElementById("mount"), {
       appId: APP_ID, apiServer: API,
@@ -114,27 +164,6 @@ function emit(obj) {
   }, [APP_ID, API]);
 
   await page.waitForSelector("[id^=dx_captcha_basic_slider]", { timeout: 15000 }).catch(() => {});
-
-  if (MODE === "auto" && DIST > 0) {
-    const box = await page.evaluate(() => {
-      const el = document.querySelector("[id^=dx_captcha_basic_slider]");
-      if (!el) return null;
-      const r = el.getBoundingClientRect();
-      return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
-    });
-    if (box) {
-      await page.mouse.move(box.x, box.y);
-      await page.mouse.down();
-      await page.waitForTimeout(120);
-      for (let i = 1; i <= 26; i++) {
-        const t = i / 26, e = 1 - Math.pow(1 - t, 3);
-        await page.mouse.move(box.x + DIST * e, box.y + (Math.random() - 0.5));
-        await page.waitForTimeout(12 + Math.random() * 14);
-      }
-      await page.waitForTimeout(250);
-      await page.mouse.up();
-    }
-  }
 
   // 轮询等结果（manual 模式下由人来拖）
   try {

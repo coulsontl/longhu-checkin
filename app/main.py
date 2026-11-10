@@ -138,7 +138,7 @@ async def api_bind(
             raise HTTPException(
                 400,
                 f"这个指纹已被「{names}」占用。同一指纹用于多个账号会触发风控，"
-                "请换一个独立指纹（重装 App 可获取新指纹）。",
+                "请换一份未被占用的独立指纹；新版手机号登录会自动签发，不用重装 App。",
             )
 
     # 校验 token：先直接查资料，失败则尝试续期后重试
@@ -315,7 +315,7 @@ def api_login_verify(
     if not fp:
         raise HTTPException(400, "缺少设备指纹，请重新打开添加账号面板")
     if db.accounts_with_dx(fp):
-        raise HTTPException(400, "这个指纹已被其他账号占用，请重新获取指纹")
+        raise HTTPException(400, "这个指纹已被其他账号占用，请换一份未被占用的独立指纹")
 
     try:
         result = app_login.login_by_code(number, sms, fp)
@@ -366,7 +366,7 @@ def api_login_verify(
 
 @app.post("/api/accounts/{account_id}/dx")
 def api_set_dx(account_id: int, dx_token: str = Form("")):
-    """补填 App 内真实设备指纹（顶象 token）。"""
+    """补填/更换顶象设备指纹；新版手机号登录会自动签发，此项主要用于旧版或迁移账号。"""
     account = db.get_account(account_id)
     if not account:
         raise HTTPException(404, "账号不存在")
@@ -382,7 +382,7 @@ def api_set_dx(account_id: int, dx_token: str = Form("")):
             raise HTTPException(
                 400,
                 f"这个指纹已被「{names}」占用。同一指纹用于多个账号会触发风控，"
-                "请换一个独立指纹（重装 App 可获取新指纹）。",
+                "请换一份未被占用的独立指纹；新版手机号登录会自动签发，不用重装 App。",
             )
 
     db.update_account(account_id, dx_token=value or None)

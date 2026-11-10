@@ -1,13 +1,16 @@
-"""从 Mac 上的龙湖 App 容器里读出登录凭据与设备指纹。
+"""【旧版路径】从 Mac 上的龙湖 App 容器里读出登录凭据与设备指纹。
+
+新版（2026-11-07 起）已改为手机号验证码登录，设备指纹由服务端 app/dxrisk.py
+自动签发并写进 dx_token；不需要 Mac App、不需要 Apple 芯片、不需要抓包。
+本工具仅供旧版导入账号 / 迁移场景保留，Intel Mac 用户直接走网页添加账号即可。
 
 App 跑在 Mac 上时（Apple 芯片装的 iOS 版），token 存在 NSUserDefaults 的
-SALoginData 里，设备指纹存在 App 内 WebView 的 localStorage 里，都能直接读，
-不需要抓包。
+SALoginData 里，设备指纹存在 App 内 WebView 的 localStorage 里，都能直接读。
 
 用法：
     python tools/read_mac_app.py
 
-输出 token / lmId / 顶象指纹，照着填进看板的「添加账号」或「补指纹」即可。
+输出 token / lmId / 顶象指纹，照着填进看板的「换指纹」即可。
 """
 import glob
 import json

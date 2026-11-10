@@ -79,7 +79,7 @@ DEFAULT_SETTINGS = {
     "webhook_url": "",
     "auto_refresh": "1",
     # APP 专享入口怎么处理：auto（默认）/ manual（只查状态、未签提醒）/ off。
-    # 前提是账号里配了 App 内真实设备指纹（dx_token），否则自动跳过不硬打。
+    # 前提是账号里配了顶象设备指纹（dx_token，新版由服务端签发），否则自动跳过不硬打。
     "app_checkin_mode": "auto",
 }
 
@@ -113,7 +113,7 @@ def init():
 
 # 建表之后新增的列：老库用 ALTER TABLE 补，新库由 SCHEMA 直接带上
 MIGRATIONS = {
-    # 顶象设备指纹。App 内生成的才被认可，udid/c1 拿到的 40 位 token 会被判风险
+    # 顶象设备指纹。新版由 dxrisk 服务端签发、旧版来自 App；udid/c1 的 40 位 token 会被判风险
     "accounts": {
         "dx_token": "ALTER TABLE accounts ADD COLUMN dx_token TEXT",
         # 单账号自定义的两个入口时间，留空表示跟随全局设置

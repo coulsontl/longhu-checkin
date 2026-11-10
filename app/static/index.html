@@ -171,7 +171,8 @@
 
     <div id="tipPhone" class="tips">
       填手机号 → 获取验证码（首次要拖一次滑块）→ 填验证码即可。登录拿到的 token 直接用于签到，
-      还会自动同步一份<b>独立设备指纹</b>（每个账号一份，共用会触发风控）。
+      服务端还会自动签发一份<b>独立设备指纹</b>（每个账号一份，共用会触发风控）；
+      不需要 Mac App、不需要抓包，跟本机是什么芯片无关。
     </div>
 
     <div class="field">
@@ -255,7 +256,7 @@
         <option value="off">完全不处理</option>
       </select>
     </div>
-    <div class="tips">APP 入口要求 <code>X-LF-DXRisk-Token</code> 是 App 内生成的真实指纹，否则会回 <code>801810</code>／<code>8040012</code> 这类误导性报错。<br><b>每个账号必须用不同的指纹</b>——同一指纹用于多个账号会触发风控。重装 App 会生成新指纹；Mac 上跑 <code>python tools/read_mac_app.py</code> 可直接读出。没配指纹时会跳过 APP 入口，共用指纹的账号会被暂停签到。</div>
+    <div class="tips">APP 入口要求每个账号一份独立的顶象指纹：新版「手机号验证码登录」已由服务端自动签发并写进 <code>dx_token</code>，不用去 App 里取，也不用重装 App。旧版/迁移账号才需要用「换指纹」补填 App 内真实指纹。<br><b>共用指纹会触发风控，账号会被暂停签到</b>。另外 <code>801810</code>／<code>8040012</code> 不是指纹坏了，而是新「(账号,指纹)」组合要过一次人机验证：<b>保持指纹不变</b>，配置 <code>LONGHU_CAPTCHA</code> 让看板用同一份指纹过滑块并重试；去 App 手动签到对服务端签发的这份指纹无效。</div>
     <div class="dialog-foot">
       <button id="btnCancelSet" class="ghost">取消</button>
       <button id="btnSaveSet" class="primary">保存</button>
@@ -368,7 +369,7 @@ function renderAccounts() {
           <div class="card-name">${escapeHtml(a.name)}</div>
           <div class="card-sub">${a.token_mask || ""} · <span style="color:${dxColor}" title="${escapeHtml(dxTitle)}">指纹${dxLabel}</span></div>
           <div class="card-sched">小程序 ${escapeHtml((a.windows && a.windows.mini) || "—")} · APP ${escapeHtml((a.windows && a.windows.app) || "—")}</div>
-          ${a.dx_conflict ? `<div style="margin-top:6px;font-size:12px;color:var(--red)">已暂停签到：与「${escapeHtml(sharedWith)}」共用指纹，重装 App 换新指纹</div>` : ""}
+          ${a.dx_conflict ? `<div style="margin-top:6px;font-size:12px;color:var(--red)">已暂停签到：与「${escapeHtml(sharedWith)}」共用指纹，请点「换指纹」填一份未被占用的新指纹</div>` : ""}
         </div>
         <span class="badge ${cls}">${label}</span>
       </div>
@@ -622,9 +623,10 @@ $("accounts").addEventListener("click", async (ev) => {
   }
   if (dxId) {
     const value = prompt(
-      "粘贴 App 内的顶象设备指纹（形如 6ae93a6cUDMfhHgK6eYXWjqtu1qMG9bAJdij8Er1）。\n" +
-      "注意：每个账号必须用不同的指纹，共用会触发风控。\n" +
-      "重装 App 会生成新指纹；Mac 上跑 python tools/read_mac_app.py 可直接读出。\n" +
+      "一般不用手填：新版手机号验证码登录会由服务端自动签发一份独立指纹。\n" +
+      "只有旧版/迁移账号才需要粘贴 App 内真实顶象指纹（形如 6ae93a6cUDMfhHgK6eYXWjqtu1qMG9bAJdij8Er1），\n" +
+      "或粘贴另一份未被占用的服务端签发指纹。注意：每个账号必须不同，共用会触发风控。\n" +
+      "换指纹会让「(账号,指纹)」重新入网，可能再次要求人机验证，别为了试探反复换。\n" +
       "留空表示清除。"
     );
     if (value === null) return;

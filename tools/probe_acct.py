@@ -78,7 +78,7 @@ def main():
     elif mini == "skip" or app_ == "skip":
         print("判定：只查了状态（--no-clock）")
     else:
-        print(f"判定：两个都被拒（{mini}/{app_}）-> 设备指纹不被认可，换 App 内真实指纹")
+        print(f"判定：两个都被拒（{mini}/{app_}）-> 换一份被认可的顶象指纹（新版由服务端签发）")
     return 0
 
 
